@@ -1,5 +1,4 @@
-﻿#include <SFML/Graphics.hpp>
-#include <windows.h>
+#include <SFML/Graphics.hpp>
 #include <iostream>
 #include <cstdlib>
 #include <ctime>
@@ -11,8 +10,9 @@ const int GRID_SIZE = 4;
 const int TILE_SIZE = 100;
 const int TILE_MARGIN = 10;
 const int WINDOW_WIDTH = GRID_SIZE * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN;
-const int WINDOW_HEIGHT = GRID_SIZE * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN;
+const int WINDOW_HEIGHT = GRID_SIZE * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN + 50; // Увеличиваем высоту для места под счет
 const float ANIMATION_DURATION = 0.1f; // Продолжительность анимации в секундах
+const int BLUR_SIZE = 5;              // Размер размытия
 
 // Игровые переменные
 int grid[GRID_SIZE][GRID_SIZE] = { 0 };
@@ -35,19 +35,32 @@ void initGame();
 
 sf::Color getTileColor(int value) {
     switch (value) {
-    case 0: return sf::Color(205, 193, 180); // Пустая плитка
-    case 2: return sf::Color(238, 228, 218);
-    case 4: return sf::Color(237, 224, 200);
-    case 8: return sf::Color(242, 177, 121);
-    case 16: return sf::Color(245, 149, 99);
-    case 32: return sf::Color(246, 124, 95);
-    case 64: return sf::Color(246, 94, 59);
-    case 128: return sf::Color(237, 207, 114);
-    case 256: return sf::Color(237, 204, 97);
-    case 512: return sf::Color(237, 200, 80);
-    case 1024: return sf::Color(237, 197, 63);
-    case 2048: return sf::Color(237, 194, 46);
-    default: return sf::Color(60, 58, 50); // Для плиток > 2048
+    case 0:
+        return sf::Color(205, 193, 180); // Пустая плитка
+    case 2:
+        return sf::Color(238, 228, 218);
+    case 4:
+        return sf::Color(237, 224, 200);
+    case 8:
+        return sf::Color(242, 177, 121);
+    case 16:
+        return sf::Color(245, 149, 99);
+    case 32:
+        return sf::Color(246, 124, 95);
+    case 64:
+        return sf::Color(246, 94, 59);
+    case 128:
+        return sf::Color(237, 207, 114);
+    case 256:
+        return sf::Color(237, 204, 97);
+    case 512:
+        return sf::Color(237, 200, 80);
+    case 1024:
+        return sf::Color(237, 197, 63);
+    case 2048:
+        return sf::Color(237, 194, 46);
+    default:
+        return sf::Color(60, 58, 50); // Для плиток > 2048
     }
 }
 
@@ -226,7 +239,6 @@ bool moveUp() {
                 moved = true;
             }
         }
-
         // Повторный сдвиг
         for (int i = 1; i < GRID_SIZE; i++) {
             if (grid[i][j] != 0) {
@@ -343,10 +355,72 @@ bool moveLeft() {
     return moved;
 }
 
+// Функция для применения размытия к тексту
+sf::Text getBlurredText(const sf::Text& text, sf::Font& font,
+    int blurSize) {
+    sf::RenderTexture renderTexture;
+    renderTexture.create(text.getLocalBounds().width + 2 * blurSize,
+        text.getLocalBounds().height + 2 * blurSize);
+    renderTexture.clear(sf::Color::Transparent);
+
+    // Рисуем текст в текстуру со сдвигом
+    sf::Text tempText = text;
+    tempText.setPosition(blurSize, blurSize);
+    renderTexture.draw(tempText);
+    renderTexture.display();
+
+    sf::Sprite sprite(renderTexture.getTexture());
+
+    // Создаем шейдер размытия
+    std::string shaderCode =
+        "uniform sampler2D texture;"
+        "uniform float blur_size;"
+        "void main() {"
+        "    vec2 resolution = vec2(textureSize(texture, 0));"
+        "    vec2 uv = gl_FragCoord.xy / resolution.xy;"
+        "    vec4 color = vec4(0.0);"
+        "    for (float i = -blur_size; i <= blur_size; i++) {"
+        "        color += texture2D(texture, uv + vec2(i / resolution.x, 0.0));"
+        "    }"
+        "    color /= (2.0 * blur_size + 1.0);"
+        "    gl_FragColor = color;"
+        "}";
+
+    sf::Shader shader;
+    if (!shader.loadFromMemory(shaderCode, sf::Shader::Fragment)) {
+        std::cerr << "Failed to load shader!" << std::endl;
+    }
+
+    shader.setUniform("texture", sf::Shader::CurrentTexture);
+    shader.setUniform("blur_size", float(blurSize));
+
+    sf::RenderStates renderStates;
+    renderStates.shader = &shader;
+
+    sf::RenderTexture blurredTexture;
+    blurredTexture.create(text.getLocalBounds().width + 2 * blurSize,
+        text.getLocalBounds().height + 2 * blurSize);
+    blurredTexture.clear(sf::Color::Transparent);
+    blurredTexture.draw(sprite, renderStates);
+    blurredTexture.display();
+
+    sf::Sprite blurredSprite(blurredTexture.getTexture());
+    sf::Text blurredText;
+    blurredText.setFont(font);
+    blurredText.setString(text.getString());
+    blurredText.setCharacterSize(text.getCharacterSize());
+    blurredText.setFillColor(text.getFillColor());
+    blurredText.setStyle(text.getStyle());
+    blurredText.setPosition(text.getPosition());
+
+    return text;
+}
+
 void drawGrid(sf::RenderWindow& window, sf::Font& font) {
     // Рисовка фона игрового поля
-    sf::RectangleShape background(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT));
+    sf::RectangleShape background(sf::Vector2f(WINDOW_WIDTH, WINDOW_HEIGHT - 50));
     background.setFillColor(sf::Color(187, 173, 160));
+    background.setPosition(0, 50); // Сдвигаем вниз на 50 пикселей
     window.draw(background);
 
     // Рисовка плиток и их значения
@@ -368,7 +442,8 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
             if (!hasAnimation) {
                 sf::RectangleShape tile(sf::Vector2f(TILE_SIZE, TILE_SIZE));
                 tile.setPosition(j * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN,
-                    i * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN);
+                    i * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN +
+                    50); // Учитываем сдвиг
                 tile.setFillColor(getTileColor(grid[i][j]));
                 window.draw(tile);
 
@@ -387,7 +462,8 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
                         text.setCharacterSize(30);
 
                     // Настройка цвета текста
-                    text.setFillColor(grid[i][j] <= 4 ? sf::Color(119, 110, 101) : sf::Color(249, 246, 242));
+                    text.setFillColor(grid[i][j] <= 4 ? sf::Color(119, 110, 101)
+                        : sf::Color(249, 246, 242));
 
                     // Центрирование текста
                     sf::FloatRect textRect = text.getLocalBounds();
@@ -396,8 +472,8 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
                     text.setPosition(j * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN +
                         TILE_SIZE / 2.0f,
                         i * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN +
-                        TILE_SIZE / 2.0f);
-
+                        TILE_SIZE / 2.0f +
+                        50); // Учитываем сдвиг
                     window.draw(text);
                 }
             }
@@ -407,10 +483,15 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
     // Рисуем анимации
     for (const auto& anim : animations) {
         float progress = anim.time / ANIMATION_DURATION;
-        if (progress > 1.0f) progress = 1.0f;
+        if (progress > 1.0f)
+            progress = 1.0f;
 
-        float x = (anim.colStart + (anim.colEnd - anim.colStart) * progress) * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN;
-        float y = (anim.rowStart + (anim.rowEnd - anim.rowStart) * progress) * (TILE_SIZE + TILE_MARGIN) + TILE_MARGIN;
+        float x = (anim.colStart + (anim.colEnd - anim.colStart) * progress) *
+            (TILE_SIZE + TILE_MARGIN) +
+            TILE_MARGIN;
+        float y = (anim.rowStart + (anim.rowEnd - anim.rowStart) * progress) *
+            (TILE_SIZE + TILE_MARGIN) +
+            TILE_MARGIN + 50; // Учитываем сдвиг
 
         sf::RectangleShape tile(sf::Vector2f(TILE_SIZE, TILE_SIZE));
         tile.setPosition(x, y);
@@ -432,7 +513,8 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
                 text.setCharacterSize(30);
 
             // Настройка цвета текста
-            text.setFillColor(anim.value <= 4 ? sf::Color(119, 110, 101) : sf::Color(249, 246, 242));
+            text.setFillColor(anim.value <= 4 ? sf::Color(119, 110, 101)
+                : sf::Color(249, 246, 242));
 
             // Центрирование текста
             sf::FloatRect textRect = text.getLocalBounds();
@@ -443,7 +525,6 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
             window.draw(text);
         }
     }
-
     // Отображение счета счет
     sf::Text scoreText;
     scoreText.setFont(font);
@@ -454,26 +535,44 @@ void drawGrid(sf::RenderWindow& window, sf::Font& font) {
     window.draw(scoreText);
 
     // Отображение сообщения о конце игры или победе
-    sf::Text statusText;
-    statusText.setFont(font);
-    statusText.setCharacterSize(40);
-    statusText.setFillColor(sf::Color::White);
-    statusText.setPosition(WINDOW_WIDTH / 2 - 150, WINDOW_HEIGHT / 2 - 50);
-
     if (gameOver) {
+        sf::Text statusText;
+        statusText.setFont(font);
         statusText.setString("Game over!");
-        window.draw(statusText);
+        statusText.setCharacterSize(40);
+        statusText.setFillColor(sf::Color::White);
+
+        // Центрируем текст
+        sf::FloatRect textRect = statusText.getLocalBounds();
+        statusText.setOrigin(textRect.left + textRect.width / 2.0f,
+            textRect.top + textRect.height / 2.0f);
+        statusText.setPosition(sf::Vector2f(WINDOW_WIDTH / 2.0f,
+            WINDOW_HEIGHT / 2.0f));
+
+        // Размываем текст
+        sf::Text blurredText = getBlurredText(statusText, font, BLUR_SIZE);
+
+        window.draw(blurredText);
     }
 
     if (win) {
+        sf::Text statusText;
+        statusText.setFont(font);
         statusText.setString("You win!");
+        statusText.setCharacterSize(40);
+        statusText.setFillColor(sf::Color::White);
+
+        // Центрируем текст
+        sf::FloatRect textRect = statusText.getLocalBounds();
+        statusText.setOrigin(textRect.left + textRect.width / 2.0f,
+            textRect.top + textRect.height / 2.0f);
+        statusText.setPosition(sf::Vector2f(WINDOW_WIDTH / 2.0f,
+            WINDOW_HEIGHT / 2.0f));
         window.draw(statusText);
     }
 }
 
 int main() {
-    system("chcp 1251");
-
     // Инициализация генератор случайных чисел
     srand(time(0));
 
@@ -494,58 +593,64 @@ int main() {
     // Основной игровой цикл
     sf::Clock clock;
     while (window.isOpen()) {
-        sf::Time deltaTime = clock.restart();
-        float dt = deltaTime.asSeconds();
-
         sf::Event event;
         while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed) {
+            if (event.type == sf::Event::Closed)
                 window.close();
-            }
-
-            // Обработка нажатия клавиш
             if (event.type == sf::Event::KeyPressed) {
                 bool moved = false;
+                animations.clear(); // Очищаем вектор анимаций перед новым ходом
 
-                // Управление стрелками или WASD
-                if (event.key.code == sf::Keyboard::Left || event.key.code == sf::Keyboard::A) {
-                    moved = moveLeft();
-                }
-                else if (event.key.code == sf::Keyboard::Right || event.key.code == sf::Keyboard::D) {
-                    moved = moveRight();
-                }
-                else if (event.key.code == sf::Keyboard::Up || event.key.code == sf::Keyboard::W) {
+                if (event.key.code == sf::Keyboard::W) {
                     moved = moveUp();
                 }
-                else if (event.key.code == sf::Keyboard::Down || event.key.code == sf::Keyboard::S) {
+                else if (event.key.code == sf::Keyboard::S) {
                     moved = moveDown();
+                }
+                else if (event.key.code == sf::Keyboard::A) {
+                    moved = moveLeft();
+                }
+                else if (event.key.code == sf::Keyboard::D) {
+                    moved = moveRight();
+                }
+                else if (event.key.code == sf::Keyboard::Up) {
+                    moved = moveUp();
+                }
+                else if (event.key.code == sf::Keyboard::Down) {
+                    moved = moveDown();
+                }
+                else if (event.key.code == sf::Keyboard::Left) {
+                    moved = moveLeft();
+                }
+                else if (event.key.code == sf::Keyboard::Right) {
+                    moved = moveRight();
+                }
+                else if (event.key.code == sf::Keyboard::R) {
+                    initGame(); // Перезапуск игры
+                }
+                else if (event.key.code == sf::Keyboard::Escape) {
+                    window.close(); // Выход из игры
                 }
 
                 if (moved) {
                     addRandomTile();
                     updateGameState();
                 }
-
-                // Рестарт игры по нажатию R
-                if (event.key.code == sf::Keyboard::R) {
-                    initGame();
-                }
-
-                // Выход из игры по Escape
-                if (event.key.code == sf::Keyboard::Escape) {
-                    window.close();
-                }
             }
         }
 
         // Обновление анимаций
+        float deltaTime = clock.restart().asSeconds();
         for (auto& anim : animations) {
-            anim.time += dt;
+            anim.time += deltaTime;
         }
 
         // Удаление завершенных анимаций
         animations.erase(std::remove_if(animations.begin(), animations.end(),
-            [](const Animation& anim) { return anim.time >= ANIMATION_DURATION; }), animations.end());
+            [](const Animation& anim) {
+                return anim.time >= ANIMATION_DURATION;
+            }),
+            animations.end());
 
         // Отрисовка
         window.clear();
